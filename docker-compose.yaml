@@ -1,0 +1,32 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8070:8070"
+    volumes:
+      - ./src:/app/src
+    networks:
+      - airflow-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/server.js:/app/server.js
+    environment:
+      MINIO_ENDPOINT: minio-1
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    networks:
+      - airflow-net
+
+networks:
+  airflow-net:
+    external: true
+    name: airflow_workspace_airflow-network

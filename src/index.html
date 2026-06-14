@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>股票 K線圖 - 自動偵測欄位</title>
+
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-base.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-stock.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-ui.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-exports.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-annotations.min.js"></script>
+  <script src="https://cdn.anychart.com/releases/v8/js/anychart-data-adapter.min.js"></script>
+
+  <link href="https://cdn.anychart.com/releases/v8/css/anychart-ui.min.css" rel="stylesheet">
+  <link href="https://cdn.anychart.com/releases/v8/fonts/css/anychart-font.min.css" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; margin: 0; padding: 0;
+      background: #0d0f14;
+      font-family: 'Courier New', monospace;
+      color: #c8d0e0;
+      overflow: hidden;
+    }
+
+    #wrapper {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    #controls {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 12px; background: #131720;
+      border-bottom: 1px solid #1e2535;
+      flex-wrap: wrap;
+      flex-shrink: 0;
+      min-height: 34px;
+    }
+    #controls label { font-size: 11px; color: #8899aa; letter-spacing: 0.05em; white-space: nowrap; }
+    #controls select {
+      background: #1a2030; color: #c8d0e0;
+      border: 1px solid #2a3550; border-radius: 4px;
+      padding: 3px 6px; font-size: 11px; font-family: inherit;
+      cursor: pointer; outline: none;
+      min-width: 80px; max-width: 140px;
+      flex-shrink: 1;
+    }
+    #controls select:focus { border-color: #4a90d9; }
+
+    #sel-group { display: flex; align-items: center; gap: 8px; flex-shrink: 0; flex-wrap: nowrap; }
+
+    #badge-row {
+      display: flex; gap: 4px; flex-wrap: wrap; align-items: center;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+    .badge {
+      font-size: 10px; padding: 2px 7px; border-radius: 20px;
+      letter-spacing: 0.06em; font-weight: bold;
+      border: 1px solid currentColor;
+      transition: opacity 0.25s;
+      opacity: 0.22; cursor: default;
+    }
+    .badge.on { opacity: 1; }
+    .b-vol    { color: #aaaaaa; }
+    .b-ema13  { color: #ff9900; }
+    .b-ema26  { color: #4488ff; }
+    /* SMA50: warm amber, lighter than EMA13 */
+    .b-sma50  { color: #ffcc44; }
+    /* SMA200: cool periwinkle, lighter than EMA26 */
+    .b-sma200 { color: #88aaff; }
+    .b-bband  { color: #aaaaaa; }
+    .b-macd   { color: #44dd88; }
+    .b-adx    { color: #ffdd44; }
+    .b-stoch  { color: #44ccff; }
+    .b-willr  { color: #ff7766; }
+    /* Pair 1: MACD_hist + FI_13 */
+    .b-p1     { color: #44dd88; }
+    /* Pair 2: EMA13_trend + FI_2 */
+    .b-p2     { color: #88ffcc; }
+    /* Pair 3: Bull + Bear */
+    .b-p3     { color: #f0a500; }
+    /* Side signals */
+    .b-long   { color: #ff44ff; }
+    .b-short  { color: #ff4444; }
+    .b-peak   { color: #ffaa00; }
+    .b-trough { color: #00ccff; }
+
+    #status {
+      font-family: 'Segoe UI', 'Inter', 'Arial', sans-serif;
+      font-size: 11px; font-weight: 500;
+      color: #7a9bbf; letter-spacing: 0.04em;
+      padding: 3px 16px;
+      background: #0b0d12;
+      border-bottom: 1px solid #111520;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex-shrink: 0;
+    }
+
+    #container { width: 100%; flex: 1 0 auto; }
+  </style>
+</head>
+<body>
+
+<div id="wrapper">
+  <div id="controls">
+    <div id="sel-group">
+      <label for="stockSelector">股票</label>
+      <select id="stockSelector"><option>載入中...</option></select>
+      <label for="periodSelector">週期</label>
+      <select id="periodSelector">
+        <option value="D">日線 (D)</option>
+        <option value="W">週線 (W)</option>
+        <option value="2W">兩週線 (2W)</option>
+        <option value="3W">三週線 (3W)</option>
+        <option value="ME">月線 (1M)</option>
+        <option value="2M">兩月線 (2M)</option>
+        <option value="3M">季線 (3M)</option>
+      </select>
+    </div>
+    <div id="badge-row"></div>
+  </div>
+
+  <div id="status">等待資料...</div>
+  <div id="container"></div>
+</div>
+
+<script>
+  let chart;
+  const stockSel  = document.getElementById('stockSelector');
+  const periodSel = document.getElementById('periodSelector');
+  const statusEl  = document.getElementById('status');
+  const badgeRow  = document.getElementById('badge-row');
+  const container = document.getElementById('container');
+
+  // ── Catalogue ──────────────────────────────────────────────
+  const CATALOGUE = [
+    // Overlays on main price plot
+    { key:'Volume',       label:'VOL',       cls:'b-vol'   , group:'volume' , default:false },
+    { key:'EMA13',        label:'EMA13',     cls:'b-ema13' , group:'ema13'  , default:true  },
+    { key:'EMA26',        label:'EMA26',     cls:'b-ema26' , group:'ema26'  , default:true  },
+    // ── NEW: SMA50 & SMA200 ──────────────────────────────────
+    { key:'SMA50',        label:'SMA50',     cls:'b-sma50' , group:'sma50'  , default:true  },
+    { key:'SMA200',       label:'SMA200',    cls:'b-sma200', group:'sma200' , default:true  },
+    // ────────────────────────────────────────────────────────
+    { key:'upperband',    label:'BBAND',     cls:'b-bband' , group:'bband'  , default:true  },
+    { key:'lowerband',    label:'BBAND',     cls:'b-bband' , group:'bband'  , default:true  },
+    { key:'middleband',   label:'BBAND',     cls:'b-bband' , group:'bband'  , default:true  },
+    // ADX, STOCH, WILLR — standalone sub-plots, off by default
+    { key:'ADX',          label:'ADX',       cls:'b-adx'   , group:'adx'   , default:false },
+    { key:'PLUS_DI',      label:'ADX',       cls:'b-adx'   , group:'adx'   , default:false },
+    { key:'MINUS_DI',     label:'ADX',       cls:'b-adx'   , group:'adx'   , default:false },
+    { key:'STOCH_slowk',  label:'STOCH',     cls:'b-stoch' , group:'stoch' , default:false },
+    { key:'STOCH_slowd',  label:'STOCH',     cls:'b-stoch' , group:'stoch' , default:false },
+    { key:'WILLR',        label:'WILLR',     cls:'b-willr' , group:'willr' , default:false },
+    // Pair 1: MACD (hist+line+signal) + FI_13 + Side_1 → same badge toggle
+    { key:'MACD',         label:'P1 MACD+FI13+S1', cls:'b-p1', group:'p1', default:true  },
+    { key:'MACD_signal',  label:'P1 MACD+FI13+S1', cls:'b-p1', group:'p1', default:true  },
+    { key:'MACD_hist',    label:'P1 MACD+FI13+S1', cls:'b-p1', group:'p1', default:true  },
+    { key:'FI_13',        label:'P1 MACD+FI13+S1', cls:'b-p1', group:'p1', default:true  },
+    { key:'Side_1',       label:'P1 MACD+FI13+S1', cls:'b-p1', group:'p1', default:true  },
+    // Pair 2: EMA13_trend + FI_2 + Side_2 → same badge toggle
+    { key:'EMA13_trend',  label:'P2 Trend+FI2+S2', cls:'b-p2', group:'p2', default:true  },
+    { key:'FI_2',         label:'P2 Trend+FI2+S2', cls:'b-p2', group:'p2', default:true  },
+    { key:'Side_2',       label:'P2 Trend+FI2+S2', cls:'b-p2', group:'p2', default:true  },
+    // Pair 3: Bull_Power + Bear_Power + Side_3 → shared sub-plot
+    { key:'Bull_Power',   label:'P3 Bull✕Bear', cls:'b-p3', group:'p3'   , default:true  },
+    { key:'Bear_Power',   label:'P3 Bull✕Bear', cls:'b-p3', group:'p3'   , default:true  },
+    { key:'Side_3',       label:'P3 Bull✕Bear', cls:'b-p3', group:'p3'   , default:true  },
+    // Peak / Trough markers on main plot
+    { key:'price_Peak',   label:'PEAK',      cls:'b-peak'  , group:'peak'  , default:false },
+    { key:'price_Trough', label:'TROUGH',    cls:'b-trough', group:'trough', default:false },
+  ];
+
+  let enabled = new Set(CATALOGUE.filter(c => c.default).map(c => c.key));
+
+  // ── Detect active fields ───────────────────────────────────
+  function detectActive(data) {
+    const active   = new Set();
+    const jsonKeys = new Set();
+    data.forEach(row => Object.keys(row).forEach(k => jsonKeys.add(k)));
+
+    CATALOGUE.forEach(({ key }) => {
+      if (!jsonKeys.has(key)) return;
+      const isBool = data.some(r => r[key] === true || r[key] === false);
+      if (isBool) {
+        if (data.some(r => r[key] === true)) active.add(key);
+      } else if (key === 'EMA13_trend') {
+        if (data.some(r => r[key] !== null && r[key] !== undefined && r[key] !== '')) active.add(key);
+      } else if (key === 'Side_1' || key === 'Side_2' || key === 'Side_3') {
+        if (data.some(r => r[key] === 'Long' || r[key] === 'Short')) active.add(key);
+      } else if (key === 'MACD' || key === 'MACD_signal') {
+        if (data.some(r => r[key] !== null && r[key] !== undefined && r[key] !== '' && !isNaN(parseFloat(r[key])))) {
+          active.add(key);
+        }
+      } else {
+        if (data.some(r => r[key] !== null && r[key] !== undefined && r[key] !== '' && !isNaN(parseFloat(r[key])))) {
+          active.add(key);
+        }
+      }
+    });
+
+    return active;
+  }
+
+  // ── Badges ─────────────────────────────────────────────────
+  let lastData = null, lastTicker = '', lastPeriod = '';
+  let currentRange = null;   // { start, end } — 記住使用者當前的時間軸範圍
+
+  function renderBadges(available) {
+    badgeRow.innerHTML = '';
+    const seenGroup = new Set();
+    CATALOGUE.forEach(({ key, label, cls, group }) => {
+      if (seenGroup.has(group)) return;
+      seenGroup.add(group);
+
+      const groupKeys = CATALOGUE.filter(c => c.group === group).map(c => c.key);
+      const hasData   = groupKeys.some(k => available.has(k));
+      const isEnabled = groupKeys.some(k => enabled.has(k));
+
+      const span = document.createElement('span');
+      span.className = `badge ${cls}`;
+      span.textContent = label;
+      span.title = `${label} — 點擊切換`;
+      span.style.cursor = 'pointer';
+
+      if (!hasData) {
+        span.style.opacity = '0.12';
+        span.style.cursor  = 'not-allowed';
+      } else if (isEnabled) {
+        span.classList.add('on');
+      }
+
+      span.addEventListener('click', () => {
+        if (!hasData) return;
+        const nowOn = groupKeys.some(k => enabled.has(k));
+        if (nowOn) { groupKeys.forEach(k => enabled.delete(k)); }
+        else       { groupKeys.forEach(k => enabled.add(k));    }
+        if (lastData) buildChart(lastData, lastTicker, lastPeriod);
+      });
+
+      badgeRow.appendChild(span);
+    });
+  }
+
+  // ── Coerce numerics ────────────────────────────────────────
+  const NUM_FIELDS = [
+    'Open','High','Low','Close','Volume',
+    'EMA13','EMA26',
+    'SMA50','SMA200',                          // ← NEW
+    'upperband','middleband','lowerband',
+    'MACD','MACD_signal','MACD_hist',
+    'ADX','PLUS_DI','MINUS_DI',
+    'STOCH_slowk','STOCH_slowd','WILLR',
+    'FI','FI_2','FI_13','ATR',
+    'Bull_Power','Bear_Power','EMA_bullbear'
+  ];
+  function coerce(data) {
+    return data.map(row => {
+      const r = Object.assign({}, row);
+      NUM_FIELDS.forEach(k => {
+        if (k in r) { const n = parseFloat(r[k]); r[k] = isNaN(n) ? null : n; }
+      });
+      return r;
+    });
+  }
+
+  // ── Scale helper ──────────────────────────────────────────
+  function applyScaleTitleToPlot(sp, data, colKey, baseTitle) {
+    const vals = data.map(r => r[colKey]).filter(v => v !== null && v !== undefined && !isNaN(v));
+    if (!vals.length) { try { sp.title(baseTitle); } catch(e){} return; }
+    const maxAbs  = Math.max(...vals.map(Math.abs));
+    if (maxAbs < 10000) { try { sp.title(baseTitle); } catch(e){} return; }
+    const exp     = Math.floor(Math.log10(maxAbs));
+    const divisor = Math.pow(10, exp);
+    try {
+      sp.title(`${baseTitle}  \u00D710^${exp}`);
+      sp.yAxis().labels().format(function() {
+        return parseFloat((this.value / divisor).toFixed(2)).toString();
+      });
+    } catch(e) {}
+  }
+
+  // ── EMA13_trend background band renderer ──────────────────
+  function drawTrendBands(pp, data) {
+    try {
+      const annotations = pp.annotations();
+      let segStart = null, segTrend = null;
+
+      function flush(endDate) {
+        if (!segStart || !segTrend) return;
+        const color = segTrend === 'Up'   ? '#2ecc7118'
+                    : segTrend === 'Down' ? '#ff4d4f18'
+                    : '#ffffff08';
+        const rect = annotations.rectangle();
+        rect.xAnchor(segStart).valueAnchor(0)
+            .secondXAnchor(endDate).secondValueAnchor(1)
+            .fill(color).stroke('none');
+        try { rect.allowEdit(false); } catch(e) {}
+      }
+
+      for (let i = 0; i < data.length; i++) {
+        const trend = data[i].EMA13_trend || null;
+        if (i === 0) { segStart = data[i].Date; segTrend = trend; continue; }
+        if (trend !== segTrend) {
+          flush(data[i].Date);
+          segStart = data[i].Date; segTrend = trend;
+        }
+      }
+      if (data.length) flush(data[data.length - 1].Date);
+    } catch(e) {
+      console.warn('Trend band draw error:', e);
+    }
+  }
+
+  // ── Main chart builder ─────────────────────────────────────
+  function buildChart(rawData, ticker, period) {
+    lastData = rawData; lastTicker = ticker; lastPeriod = period;
+
+    const data      = coerce(rawData);
+    const available = detectActive(data);
+    renderBadges(available);
+
+    const visible = new Set([...available].filter(k => enabled.has(k)));
+    const has = k => visible.has(k);
+
+    // ── Sub-plot layout ──────────────────────────────────────
+    const subs = [];
+    if (has('Volume'))      subs.push({ id:'vol'   });
+    if (has('ADX'))         subs.push({ id:'adx'   });
+    if (has('STOCH_slowk')) subs.push({ id:'stoch' });
+    if (has('WILLR'))       subs.push({ id:'willr' });
+    const p1On = has('MACD_hist') || has('MACD') || has('FI_13') || has('Side_1');
+    if (p1On) {
+      if (has('MACD_hist') || has('MACD')) subs.push({ id:'macd'  });
+      if (has('FI_13'))                    subs.push({ id:'fi13'  });
+    }
+    const p2On = has('EMA13_trend') || has('FI_2') || has('Side_2');
+    if (p2On) {
+      if (has('EMA13_trend')) subs.push({ id:'ema13trend' });
+      if (has('FI_2'))        subs.push({ id:'fi2'        });
+    }
+    const p3On = has('Bull_Power') || has('Bear_Power') || has('Side_3');
+    if (p3On) {
+      if (has('Bull_Power')) subs.push({ id:'bull' });
+      if (has('Bear_Power')) subs.push({ id:'bear' });
+    }
+
+    const SUB_PX   = 150;
+    const MAIN_MIN = 320;
+    const fixedPx  = 64;
+    const subTotal = subs.length * SUB_PX;
+    const neededPx = MAIN_MIN + subTotal;
+    const viewH    = window.innerHeight - fixedPx;
+    const chartH   = Math.max(neededPx, viewH);
+
+    container.style.height = chartH + 'px';
+
+    const mainPx  = chartH - subTotal;
+    const mainPct = (mainPx / chartH * 100).toFixed(1);
+    const subPct  = subs.length ? (SUB_PX / chartH * 100).toFixed(1) : '0';
+
+    // Status bar
+    const visibleLabels = [...new Set(
+      [...visible].map(k => {
+        const e = CATALOGUE.find(c => c.key === k);
+        return e ? e.label : k;
+      })
+    )];
+    statusEl.textContent =
+      `${ticker}  ·  ${period}  ·  ${data.length} bars  ·  ` +
+      (visibleLabels.length ? visibleLabels.join('  ') : '—');
+
+    if (chart) {
+      // 銷毀前先記住當前時間軸範圍
+      try {
+        const sel = chart.getSelectedRange();
+        if (sel && sel.firstSelected && sel.lastSelected) {
+          currentRange = { start: sel.firstSelected, end: sel.lastSelected };
+        }
+      } catch(e) {}
+      chart.dispose();
+    }
+    chart = anychart.stock();
+    chart.title(`${ticker}  ·  ${period}`);
+
+    const dt      = anychart.data.table('Date');
+    dt.addData(data);
+    const ohlcMap = dt.mapAs({ open:'Open', high:'High', low:'Low', close:'Close', value:'Close' });
+
+    // ── Plot 0: Candles + overlays ─────────────────────────
+    const pp = chart.plot(0);
+    pp.height(mainPct + '%');
+    pp.yGrid(true).yMinorGrid(true);
+    pp.xAxis().labels().format(function() {
+      return anychart.format.dateTime(this.value, 'yyyy/MM/dd');
+    });
+
+    if (has('EMA13_trend')) {
+      drawTrendBands(pp, data);
+    }
+
+    // Candles — ALWAYS shown
+    const candle = pp.candlestick(ohlcMap).name(ticker);
+    candle.legendItem().iconType('rising-falling');
+    candle.risingFill('#2ecc71').risingStroke('#2ecc71');
+    candle.fallingFill('#ff4d4f').fallingStroke('#ff4d4f');
+
+    // Overlays
+    if (has('EMA13'))
+      pp.line(dt.mapAs({ value:'EMA13' })).name('EMA13').stroke('#ff9900', 2);
+    if (has('EMA26'))
+      pp.line(dt.mapAs({ value:'EMA26' })).name('EMA26').stroke('#4488ff', 2);
+
+    // ── NEW: SMA50 & SMA200 ──────────────────────────────────
+    // SMA50: warm amber (lighter/thinner than EMA13 #ff9900), dashed
+    if (has('SMA50'))
+      pp.line(dt.mapAs({ value:'SMA50' })).name('SMA50')
+        .stroke({ color:'#ffcc44', thickness:1.5, dash:'6 3' });
+    // SMA200: cool periwinkle (lighter/thinner than EMA26 #4488ff), dashed
+    if (has('SMA200'))
+      pp.line(dt.mapAs({ value:'SMA200' })).name('SMA200')
+        .stroke({ color:'#88aaff', thickness:1.5, dash:'6 3' });
+    // ────────────────────────────────────────────────────────
+
+    if (has('upperband'))
+      pp.line(dt.mapAs({ value:'upperband' })).name('BB上')
+        .stroke({ color:'#999999', thickness:1.5, dash:'4 4' });
+    if (has('middleband'))
+      pp.line(dt.mapAs({ value:'middleband' })).name('BB中')
+        .stroke({ color:'#bbbbbb', thickness:1, dash:'2 4' });
+    if (has('lowerband'))
+      pp.line(dt.mapAs({ value:'lowerband' })).name('BB下')
+        .stroke({ color:'#999999', thickness:1.5, dash:'4 4' });
+
+    // ── Side_1 ─────────────────────────────────────────────
+    if (has('Side_1')) {
+      const side1Long  = data.filter(d => d.Side_1 === 'Long');
+      const side1Short = data.filter(d => d.Side_1 === 'Short');
+      if (side1Long.length) {
+        const t = anychart.data.table('Date'); t.addData(side1Long);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S1 Long').size(9).type('triangleUp').fill('#1a7a3c').stroke('#1a7a3c');
+      }
+      if (side1Short.length) {
+        const t = anychart.data.table('Date'); t.addData(side1Short);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S1 Short').size(9).type('triangleDown').fill('#c0165a').stroke('#c0165a');
+      }
+    }
+
+    // ── Side_2 ─────────────────────────────────────────────
+    if (has('Side_2')) {
+      const side2Long  = data.filter(d => d.Side_2 === 'Long');
+      const side2Short = data.filter(d => d.Side_2 === 'Short');
+      if (side2Long.length) {
+        const t = anychart.data.table('Date'); t.addData(side2Long);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S2 Long').size(7).type('triangleUp').fill('#27ae60').stroke('#27ae60');
+      }
+      if (side2Short.length) {
+        const t = anychart.data.table('Date'); t.addData(side2Short);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S2 Short').size(7).type('triangleDown').fill('#e91e8c').stroke('#e91e8c');
+      }
+    }
+
+    // ── Side_3 ─────────────────────────────────────────────
+    if (has('Side_3')) {
+      const side3Long  = data.filter(d => d.Side_3 === 'Long');
+      const side3Short = data.filter(d => d.Side_3 === 'Short');
+      if (side3Long.length) {
+        const t = anychart.data.table('Date'); t.addData(side3Long);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S3 Long').size(7).type('triangleUp').fill('#145a32').stroke('#145a32');
+      }
+      if (side3Short.length) {
+        const t = anychart.data.table('Date'); t.addData(side3Short);
+        pp.marker(t.mapAs({ value:'Close' }))
+          .name('S3 Short').size(7).type('triangleDown').fill('#ff69b4').stroke('#ff69b4');
+      }
+    }
+
+    // Peak / Trough
+    if (has('price_Peak')) {
+      const rows = data.filter(d => d.price_Peak === true);
+      if (rows.length) {
+        const t = anychart.data.table('Date'); t.addData(rows);
+        pp.marker(t.mapAs({ value:'High' }))
+          .name('Peak').size(6).type('triangleDown').fill('#ffaa00').stroke('#ffaa00');
+      }
+    }
+    if (has('price_Trough')) {
+      const rows = data.filter(d => d.price_Trough === true);
+      if (rows.length) {
+        const t = anychart.data.table('Date'); t.addData(rows);
+        pp.marker(t.mapAs({ value:'Low' }))
+          .name('Trough').size(6).type('triangleUp').fill('#00ccff').stroke('#00ccff');
+      }
+    }
+
+    // ── Sub-plots ──────────────────────────────────────────
+    let plotIdx = 1;
+    subs.forEach(({ id }) => {
+      const sp = chart.plot(plotIdx++);
+      sp.height(subPct + '%');
+      sp.yGrid(true);
+
+      if (id === 'vol') {
+        const m = dt.mapAs({ open:'Open', close:'Close', value:'Volume' });
+        const s = sp.column(m).name('成交量');
+        s.normal().fill(function() {
+          return this.getData('close') >= this.getData('open') ? '#2ecc71aa' : '#ff4d4faa';
+        }).stroke('none');
+        applyScaleTitleToPlot(sp, data, 'Volume', 'VOL');
+      }
+
+      else if (id === 'adx') {
+        sp.line(dt.mapAs({ value:'ADX' })).name('ADX').stroke('#ffdd44', 1.5);
+        if (has('PLUS_DI'))
+          sp.line(dt.mapAs({ value:'PLUS_DI' })).name('+DI').stroke('#2ecc71', 1);
+        if (has('MINUS_DI'))
+          sp.line(dt.mapAs({ value:'MINUS_DI' })).name('-DI').stroke('#ff4d4f', 1);
+        sp.lineMarker(0).value(25).stroke('#ffffff22', 1, '4 4');
+        try { sp.title('ADX'); } catch(e) {}
+      }
+
+      else if (id === 'stoch') {
+        sp.line(dt.mapAs({ value:'STOCH_slowk' })).name('%K').stroke('#44ccff', 1.5);
+        if (has('STOCH_slowd'))
+          sp.line(dt.mapAs({ value:'STOCH_slowd' })).name('%D').stroke('#ff88cc', 1.5);
+        sp.lineMarker(0).value(80).stroke('#ffffff22', 1, '4 4');
+        sp.lineMarker(1).value(20).stroke('#ffffff22', 1, '4 4');
+        try { sp.title('STOCH'); } catch(e) {}
+      }
+
+      else if (id === 'willr') {
+        sp.line(dt.mapAs({ value:'WILLR' })).name('Williams %R').stroke('#ff7766', 1.5);
+        sp.lineMarker(0).value(-20).stroke('#ffffff22', 1, '4 4');
+        sp.lineMarker(1).value(-80).stroke('#ffffff22', 1, '4 4');
+        try { sp.title('WILLR'); } catch(e) {}
+      }
+
+      else if (id === 'macd') {
+        if (has('MACD_hist')) {
+          const hm = dt.mapAs({ value:'MACD_hist' });
+          const hs = sp.column(hm).name('MACD Hist');
+          hs.normal().fill(function() {
+            return (this.getData('value') || 0) >= 0 ? '#2ecc71bb' : '#ff4d4fbb';
+          }).stroke('none');
+        }
+        if (has('MACD'))
+          sp.line(dt.mapAs({ value:'MACD' })).name('MACD').stroke('#44aaff', 1.5);
+        if (has('MACD_signal'))
+          sp.line(dt.mapAs({ value:'MACD_signal' })).name('Signal').stroke('#ffaa44', 1.5);
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        try { sp.title('MACD'); } catch(e) {}
+      }
+
+      else if (id === 'fi13') {
+        sp.line(dt.mapAs({ value:'FI_13' })).name('FI(13)').stroke('#55ddaa', 1.5);
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        applyScaleTitleToPlot(sp, data, 'FI_13', 'FI(13)');
+      }
+
+      else if (id === 'ema13trend') {
+        const trendNumData = data.map(r => ({
+          Date: r.Date,
+          TrendNum: r.EMA13_trend === 'Up'   ?  1
+                  : r.EMA13_trend === 'Down' ? -1
+                  : 0
+        }));
+        const tdt = anychart.data.table('Date');
+        tdt.addData(trendNumData);
+        const tLine = sp.line(tdt.mapAs({ value:'TrendNum' })).name('EMA13 Trend');
+        tLine.stroke('#ff9900', 1.5, '6 3');
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        try { drawTrendBandsOnSubPlot(sp, data); } catch(e) {}
+        try { sp.title('EMA13 Trend'); } catch(e) {}
+      }
+
+      else if (id === 'fi2') {
+        sp.line(dt.mapAs({ value:'FI_2' })).name('FI(2)').stroke('#88ffcc', 2);
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        applyScaleTitleToPlot(sp, data, 'FI_2', 'FI(2)');
+      }
+
+      else if (id === 'bull') {
+        const s = sp.column(dt.mapAs({ value:'Bull_Power' })).name('Bull Power');
+        s.normal().fill(function() {
+          return (this.getData('value') || 0) >= 0 ? '#2ecc71cc' : '#ff4d4fcc';
+        }).stroke('none');
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        try { sp.title('Bull Power'); } catch(e) {}
+      }
+
+      else if (id === 'bear') {
+        const s = sp.column(dt.mapAs({ value:'Bear_Power' })).name('Bear Power');
+        s.normal().fill(function() {
+          return (this.getData('value') || 0) >= 0 ? '#2ecc71cc' : '#ff4d4fcc';
+        }).stroke('none');
+        sp.lineMarker(0).value(0).stroke('#ffffff33', 1);
+        try { sp.title('Bear Power'); } catch(e) {}
+      }
+    });
+
+    chart.scroller().area(ohlcMap);
+    if (currentRange) {
+      chart.selectRange(currentRange.start, currentRange.end);
+    } else {
+      const now   = new Date();
+      const start = new Date(now.getFullYear() - 1, 0, 1);
+      chart.selectRange(start, now);
+    }
+    chart.container('container');
+    chart.draw();
+
+    anychart.ui.rangePicker().render(chart);
+    anychart.ui.rangeSelector().render(chart);
+  }
+
+  // ── Trend band helper for sub-plots ───────────────────────
+  function drawTrendBandsOnSubPlot(sp, data) {
+    const annotations = sp.annotations();
+    let segStart = null, segTrend = null;
+
+    function flush(endDate) {
+      if (!segStart || !segTrend) return;
+      const color = segTrend === 'Up'   ? '#2ecc7118'
+                  : segTrend === 'Down' ? '#ff4d4f18'
+                  : '#ffffff08';
+      const rect = annotations.rectangle();
+      rect.xAnchor(segStart).valueAnchor(-2)
+          .secondXAnchor(endDate).secondValueAnchor(2)
+          .fill(color).stroke('none');
+      try { rect.allowEdit(false); } catch(e) {}
+    }
+
+    for (let i = 0; i < data.length; i++) {
+      const trend = data[i].EMA13_trend || null;
+      if (i === 0) { segStart = data[i].Date; segTrend = trend; continue; }
+      if (trend !== segTrend) {
+        flush(data[i].Date);
+        segStart = data[i].Date; segTrend = trend;
+      }
+    }
+    if (data.length) flush(data[data.length - 1].Date);
+  }
+
+  // ── Fetch helpers ──────────────────────────────────────────
+  function loadStockChart(ticker, period) {
+    if (!ticker || !period) return;
+    statusEl.textContent = `載入  ${ticker}  (${period})...`;
+
+    fetch(`http://localhost:5000/api/stock?ticker=${encodeURIComponent(ticker)}&period=${encodeURIComponent(period)}`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(data => {
+        if (!Array.isArray(data) || !data.length) {
+          statusEl.textContent = `⚠  ${ticker}  (${period})  —  無資料`;
+          return;
+        }
+        buildChart(data, ticker, period);
+      })
+      .catch(err => {
+        statusEl.textContent = `⚠  錯誤：${err.message}`;
+        console.error(err);
+      });
+  }
+
+  fetch('http://localhost:5000/api/tickers')
+    .then(r => r.json())
+    .then(list => {
+      stockSel.innerHTML = '';
+      list.forEach(item => {
+        const o = document.createElement('option');
+        o.value = o.textContent = item.ticker;
+        stockSel.appendChild(o);
+      });
+      if (list.length) loadStockChart(list[0].ticker, periodSel.value);
+    })
+    .catch(err => { statusEl.textContent = '⚠  無法載入股票列表'; console.error(err); });
+
+  stockSel .addEventListener('change', () => { currentRange = null; loadStockChart(stockSel.value, periodSel.value); });
+  periodSel.addEventListener('change', () => { currentRange = null; loadStockChart(stockSel.value, periodSel.value); });
+
+  window.addEventListener('resize', () => {
+    if (lastData) buildChart(lastData, lastTicker, lastPeriod);
+  });
+</script>
+</body>
+</html>
