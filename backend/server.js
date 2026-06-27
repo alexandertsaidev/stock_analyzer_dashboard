@@ -137,7 +137,7 @@ app.get(["/api/stock", "/api/stock/:ticker/:period"], async (req, res) => {
   if (!ticker) return res.status(400).json({ error: "Ticker required" });
   if (!period) return res.status(400).json({ error: "Period required" });
 
-  const allowedPeriods = ["D", "W", "2W", "3W", "ME", "2M", "3M"];
+  const allowedPeriods = ["D", "W", "2W", "3W", "ME", "2ME", "3ME"];
   if (!allowedPeriods.includes(period)) {
     return res.status(400).json({ error: "Invalid period" });
   }
